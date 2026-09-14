@@ -13,7 +13,6 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   quality-checks:
@@ -137,6 +136,7 @@ jobs:
           docker stop smoke-app smoke-db || true
           exit 1
 
+      # main is protected: merges require an approved pull request.
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
@@ -155,14 +155,13 @@ jobs:
             type=raw,value=latest
             type=sha,format=long
 
-      - name: Publish image to GHCR
+      - name: Tag and publish smoke-tested image to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
-        with:
-          context: ./item-service
-          push: true
-          tags: ${{ steps.docker-metadata.outputs.tags }}
-          labels: ${{ steps.docker-metadata.outputs.labels }}
+        run: |
+          while IFS= read -r tag; do
+            docker tag item-service:test "$tag"
+            docker push "$tag"
+          done <<< "${{ steps.docker-metadata.outputs.tags }}"
 
   deploy-development:
     name: Deploy to Development (simulated)
@@ -176,7 +175,7 @@ jobs:
         run: |
           echo "Deploying item-service to development..."
           echo "Environment: development"
-          echo "Image: item-service:test"
+          echo "Image: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}"
           echo "Deploy OK (simulated)"
 
   deploy-stage:
@@ -191,7 +190,7 @@ jobs:
         run: |
           echo "Deploying item-service to stage..."
           echo "Environment: stage"
-          echo "Image: item-service:test"
+          echo "Image publication is not performed for manual workflows"
           echo "Deploy OK (simulated)"
 
   deploy-production:
@@ -206,5 +205,5 @@ jobs:
         run: |
           echo "Deploying item-service to production..."
           echo "Environment: production"
-          echo "Image: item-service:test"
+          echo "Image publication is not performed for manual workflows"
           echo "Deploy OK (simulated)"

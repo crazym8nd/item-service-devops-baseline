@@ -2,14 +2,21 @@
 
 ## Purpose
 Автоматическая проверка на каждом push/PR, что проект собирается, тесты
-проходят и Docker-образ приложения успешно строится, без необходимости
-секретов или прав на публикацию в registry.
+проходят и Docker-образ приложения успешно строится. Ветка `main` защищена:
+изменения попадают в неё только через одобренный pull request. После успешного
+smoke test коммита, попавшего в `main`, образ публикуется в GHCR.
 
 ## Requirements
 
 ### Requirement: Пайплайн запускается на push и pull request
 Система CI SHALL запускать workflow на событиях `push` и `pull_request` для
 основной ветки, используя `ubuntu-latest` runner.
+
+### Requirement: Публикация требует защищённую основную ветку
+Ветка `main` SHALL быть защищена правилами GitHub: прямые push запрещены,
+слияние возможно только через pull request с обязательным approve и успешными
+CI-проверками. Поэтому `push` в `main` является результатом слияния
+одобренного pull request.
 
 #### Scenario: Push в ветку
 - **WHEN** выполняется push коммита в отслеживаемую ветку
@@ -31,12 +38,27 @@
 - **THEN** workflow помечается как failed и последующий шаг сборки
   Docker-образа не выполняется
 
-### Requirement: Пайплайн проверяет сборку Docker-образа
-Пайплайн SHALL выполнять `docker build` образа приложения по `Dockerfile` из
-`item-service/`, подтверждая собираемость образа, без выполнения `docker
-push` в какой-либо registry.
+### Requirement: Пайплайн проверяет и публикует Docker-образ
+Пайплайн SHALL после успешных build и test один раз выполнять `docker build`
+образа приложения по `Dockerfile` из `item-service/` и запускать smoke test
+этого же локального образа с PostgreSQL. При `push` в `main` workflow SHALL
+проставлять проверенному образу теги `latest` и полный SHA коммита и
+публиковать именно его в GHCR. Для `pull_request` и `workflow_dispatch`
+публикация образа не выполняется.
 
-#### Scenario: Образ собирается успешно
+#### Scenario: Образ собирается и проходит smoke test
 - **WHEN** предыдущие шаги (build, test) завершились успешно
-- **THEN** шаг сборки образа выполняет `docker build` и завершается с кодом
-  0, без сетевого взаимодействия с container registry
+- **THEN** шаг сборки образа выполняет `docker build`, запускает этот образ с
+  PostgreSQL и завершается с кодом 0, когда `/actuator/health` возвращает
+  статус `UP`
+
+#### Scenario: Проверенный образ публикуется после merge одобренного PR
+- **WHEN** одобренный pull request успешно слит в защищённую ветку `main` и
+  smoke test его commit успешно завершился
+- **THEN** workflow публикует smoke-tested образ в GHCR с тегами `latest` и
+  полным SHA коммита, без повторной сборки образа
+
+#### Scenario: Образ не публикуется вне push в main
+- **WHEN** workflow запущен по `pull_request` или `workflow_dispatch`
+- **THEN** Docker-образ может быть собран и проверен, но `docker push` в GHCR
+  не выполняется

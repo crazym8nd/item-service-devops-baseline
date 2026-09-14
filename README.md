@@ -87,7 +87,8 @@ chat id захардкожен в `contact_points.yml` (плейсхолдер `
 - **Concurrency**: новый пуш отменяет старый запуск (`cancel-in-progress`).
 - **Timeout**: у каждой джобы лимит времени — защита от зависших сборок.
 - **Smoke test**: CI сам поднимает PostgreSQL + app, ждёт `/actuator/health == UP`, останавливает.
-- **GHCR**: образ публикуется как `ghcr.io/crazym8nd/item-service-devops-baseline:{sha}` и `:latest`.
+- **GHCR**: после успешного smoke test в registry публикуется тот же образ как `ghcr.io/crazym8nd/item-service-devops-baseline:{sha}` и `:latest`, без повторной сборки.
+- **Публикация**: выполняется только после слияния одобренного PR в защищённую ветку `main`; PR и ручной запуск workflow образ не публикуют.
 
 Деплой на stage/production — имитация (echo-шаги с GitHub Environments `development`/`stage`/`production`).
 Ручной гейт с approval: Settings → Environments → stage/production → Required reviewers.
@@ -121,7 +122,7 @@ chat id захардкожен в `contact_points.yml` (плейсхолдер `
 | Практика | Что даёт |
 |----------|----------|
 | **Environments + approval** | Ручной гейт на stage/prod (Required reviewers) |
-| **Branch protection** | main только через PR, без прямых пушей |
+| **Branch protection** | Настроено: `main` только через одобренный PR, без прямых push |
 | **Spotless / Checkstyle** | Проверка формата Java в CI |
 | **Trivy scan** | Сканирование Docker-образа на CVE |
 | **Dependabot** | Авто-обновление зависимостей (Gradle, Docker, Actions) |
@@ -196,4 +197,3 @@ make restore-corrupted   # ✗ Контрольная сумма не совпа
 | **Restore drills** | Регулярно (раз в месяц) восстанавливать бекап в тестовую БД — бекап, который ни разу не восстанавливали, это не бекап |
 | **Ротация ключей** | Периодически менять `BACKUP_PASSPHRASE` |
 | **Проверка целостности** | Периодически прогонять `sha256sum -c` по всем бекапам (detect bit rot) |
-
