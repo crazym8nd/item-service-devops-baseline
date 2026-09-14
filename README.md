@@ -84,17 +84,18 @@ chat id захардкожен в `contact_points.yml` (плейсхолдер `
 - **Jar собирается один раз** — в джобе `Build`. Docker-образ собирается из готового артефакта, Gradle внутри контейнера не запускается.
 - Линт не блокирует build/tests (быстрый фидбек), но `docker-build` требует зелёные quality-checks — кривой Dockerfile не опубликуется.
 - **Concurrency**: новый пуш отменяет старый запуск CI (`cancel-in-progress: true`).
-- **GHCR**: тот же smoke-протестированный образ публикуется как `ghcr.io/crazym8nd/item-service-devops-baseline:{sha}` и `:latest` — только push в защищённый `main` после одобренного PR.
+- **GHCR**: тот же smoke-протестированный образ публикуется как `ghcr.io/crazym8nd/item-service-devops-baseline:{sha}` и `:latest` — только push в защищённый `main` после одобренного PR. Внешние actions и Docker-образы закреплены полными SHA/digest для воспроизводимых сборок.
+- Артефакты jar и HTML test-report хранятся 7 дней; отсутствие jar завершает CI ошибкой, отсутствие HTML-отчёта выдаёт warning.
 
 ### `cd.yml` — CD
 
 | Джоба | Когда | Что деплоит |
 |-------|-------|-------------|
-| `Deploy to Development` | авто после успешного CI на `main` (через `workflow_run`) | `ghcr.io/...:sha-<commit>` |
-| `Deploy to Stage` | вручную: Actions → **CD** → Run workflow | обязательный тег из поля `image_tag` |
-| `Deploy to Production` | вручную: Actions → **CD** → Run workflow | обязательный тег из поля `image_tag` |
+| `Deploy to Development` | авто после успешного CI на `main` (через `workflow_run`) | `ghcr.io/...@sha256:<digest>` от `sha-<commit>` |
+| `Deploy to Stage` | вручную: Actions → **CD** → Run workflow | обязательный `sha-<commit>` или `vX.Y.Z`, затем `@sha256:<digest>` |
+| `Deploy to Production` | вручную: Actions → **CD** → Run workflow | обязательный `sha-<commit>` или `vX.Y.Z`, затем `@sha256:<digest>` |
 
-- **CD никогда не пересобирает образ** — деплоится уже опубликованный тег. Поле `image_tag` обязательно: `latest` не используется по умолчанию, чтобы случайно не выкатить более новый образ.
+- **CD никогда не пересобирает образ** — перед деплоем он проверяет существование тега в GHCR и резолвит его в immutable `@sha256:<digest>`. Поле `image_tag` обязательно; принимаются только `sha-<40 hex>` или `vX.Y.Z`, `latest` и произвольные значения отклоняются.
 - Concurrency per-environment (`cd-development` / `cd-stage` / `cd-production`) с `cancel-in-progress: false` — идущий деплой не отменяется новым пушем.
 - Деплой — имитация (echo) с GitHub Environments `development`/`stage`/`production`.
   Ручной гейт с approval: Settings → Environments → stage/production → Required reviewers.
@@ -104,7 +105,7 @@ chat id захардкожен в `contact_points.yml` (плейсхолдер `
 Сейчас CI публикует теги `latest` и `sha-<commit>`. Целевой поток релизов:
 
 1. Merge в `main` → CI собирает, тестирует, публикует `sha-<commit>` + `latest`, CD деплоит на development.
-2. Релизный тег `v1.2.3` → CI публикует образ с семверным тегом (см. Semantic release в roadmap).
+2. Semantic release создаёт Git tag `v1.2.3`; CI запускается по этому тегу и публикует образ с тем же семверным тегом.
 3. Stage/Prod: Actions → **CD** → Run workflow → `image_tag: v1.2.3` → деплой уже опубликованного образа.
 
 Пока публикация семверных тегов не настроена (шаг 2 — roadmap), в `image_tag` для stage/prod можно указывать `sha-<commit>` опубликованного образа.
@@ -148,7 +149,7 @@ chat id захардкожен в `contact_points.yml` (плейсхолдер `
 | Практика | Что даёт |
 |----------|----------|
 | **SonarQube** | Анализ качества кода + coverage gate |
-| **Semantic release** | Авто-версионирование + changelog |
+| **Semantic release + release-tag CI/CD** | Авто-версионирование + changelog; Git tag `vX.Y.Z` запускает CI, публикует одноимённый образ в GHCR, после чего CD разворачивает его immutable digest на stage/prod |
 | **Sentry release** | Трекинг релизов в Sentry |
 | **Реальный деплой** | Деплойный репозиторий + registry + dispatch |
 | **Restore drills** | Регулярное восстановление из бекапа в тестовую БД |

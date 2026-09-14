@@ -1,6 +1,7 @@
 #   CI:   "Build" job -> ./gradlew bootJar -> artifact -> "Docker Build & Publish"
 #   local: ./gradlew bootJar  (then: docker build .)
-FROM eclipse-temurin:24-jre
+# eclipse-temurin:24-jre
+FROM eclipse-temurin@sha256:8cb2387a28af84cf0db0948d9c67d4480192f4e567027a3963f145d218e8b4f2
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl=8.5.0-2ubuntu10.13 \

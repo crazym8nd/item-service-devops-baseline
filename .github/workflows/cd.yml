@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   deploy-development:
@@ -29,9 +30,25 @@ jobs:
       group: cd-development
       cancel-in-progress: false
     steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image digest
+        id: image
+        env:
+          IMAGE_TAG: sha-${{ github.event.workflow_run.head_sha }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+        run: |
+          digest=$(docker buildx imagetools inspect "${IMAGE_NAME}:${IMAGE_TAG}" --format '{{.Manifest.Digest}}')
+          echo "reference=${IMAGE_NAME}@${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Simulate deploy to development
         env:
-          IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}
+          IMAGE: ${{ steps.image.outputs.reference }}
         run: |
           echo "Deploying ${IMAGE} to development..."
           echo "Environment: development"
@@ -48,9 +65,29 @@ jobs:
       group: cd-stage
       cancel-in-progress: false
     steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate tag and resolve image digest
+        id: image
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^sha-[0-9a-f]{40}$ && ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "image_tag must be sha-<40 lowercase hex characters> or v<major>.<minor>.<patch>; latest is not allowed."
+            exit 1
+          fi
+          digest=$(docker buildx imagetools inspect "${IMAGE_NAME}:${IMAGE_TAG}" --format '{{.Manifest.Digest}}')
+          echo "reference=${IMAGE_NAME}@${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Simulate deploy to stage
         env:
-          IMAGE: ghcr.io/${{ github.repository }}:${{ inputs.image_tag }}
+          IMAGE: ${{ steps.image.outputs.reference }}
         run: |
           echo "Deploying ${IMAGE} to stage..."
           echo "Environment: stage"
@@ -67,9 +104,29 @@ jobs:
       group: cd-production
       cancel-in-progress: false
     steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate tag and resolve image digest
+        id: image
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^sha-[0-9a-f]{40}$ && ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "image_tag must be sha-<40 lowercase hex characters> or v<major>.<minor>.<patch>; latest is not allowed."
+            exit 1
+          fi
+          digest=$(docker buildx imagetools inspect "${IMAGE_NAME}:${IMAGE_TAG}" --format '{{.Manifest.Digest}}')
+          echo "reference=${IMAGE_NAME}@${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Simulate deploy to production
         env:
-          IMAGE: ghcr.io/${{ github.repository }}:${{ inputs.image_tag }}
+          IMAGE: ${{ steps.image.outputs.reference }}
         run: |
           echo "Deploying ${IMAGE} to production..."
           echo "Environment: production"
