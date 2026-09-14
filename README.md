@@ -1,7 +1,7 @@
 # Item Service — DevOps Baseline
 
 REST API (Spring Boot 3.5 + PostgreSQL 17) с observability-стеком (Prometheus, Grafana, Loki, Alloy), алертингом в Telegram и CI через GitHub Actions.
-
+test
 ## Требования
 
 - Java 24+
