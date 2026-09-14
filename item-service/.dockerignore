@@ -1,0 +1,13 @@
+.git
+.gradle
+gradle/wrapper
+gradlew
+gradlew.bat
+build/
+.idea
+*.iml
+.vscode
+.env
+.env.*
+Dockerfile
+.dockerignore

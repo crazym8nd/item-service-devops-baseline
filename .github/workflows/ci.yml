@@ -1,0 +1,192 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  quality-checks:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Hadolint (Dockerfile lint)
+        run: docker run --rm -i hadolint/hadolint < item-service/Dockerfile
+
+      - name: Shellcheck (scripts)
+        run: shellcheck scripts/backup.sh scripts/restore.sh
+
+      - name: Validate docker-compose
+        run: docker compose config --quiet
+
+      - name: Validate Grafana dashboards (JSON)
+        run: |
+          for f in monitoring/grafana/dashboards/*.json; do
+            jq empty "$f" && echo "OK: $f"
+          done
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 24
+        uses: actions/setup-java@v5
+        with:
+          java-version: '24'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Build jar (skip tests)
+        working-directory: item-service
+        run: ./gradlew bootJar -x test --no-daemon
+
+      - name: Upload jar artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: item-service-jar
+          path: item-service/build/libs/*.jar
+          if-no-files-found: error
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 24
+        uses: actions/setup-java@v5
+        with:
+          java-version: '24'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Run tests
+        working-directory: item-service
+        run: ./gradlew test --no-daemon
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-results
+          path: item-service/build/reports/tests/
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [ build, tests ]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build Docker image
+        working-directory: item-service
+        run: docker build -t item-service:test .
+
+      - name: Smoke test (PostgreSQL + app)
+        run: |
+          docker network create smoke
+          docker run -d --name smoke-db --network smoke \
+            -e POSTGRES_DB=item_service -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+            postgres:17
+          docker run -d --name smoke-app --network smoke -p 8080:8080 \
+            -e DB_HOST=smoke-db -e DB_PORT=5432 -e DB_NAME=item_service \
+            -e DB_USERNAME=postgres -e DB_PASSWORD=postgres \
+            item-service:test
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/actuator/health | jq -e '.status == "UP"'; then
+              echo "Smoke test OK: app is UP"
+              docker stop smoke-app smoke-db
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Smoke test FAILED: app did not become healthy"
+          docker logs smoke-app || true
+          docker stop smoke-app smoke-db || true
+          exit 1
+
+      - name: Push image to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag item-service:test ghcr.io/${{ github.repository }}:latest
+          docker tag item-service:test ghcr.io/${{ github.repository }}:${{ github.sha }}
+          docker push ghcr.io/${{ github.repository }}:latest
+          docker push ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  deploy-development:
+    name: Deploy to Development (simulated)
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: development
+    timeout-minutes: 5
+    steps:
+      - name: Simulate deploy to development
+        run: |
+          echo "Deploying item-service to development..."
+          echo "Environment: development"
+          echo "Image: item-service:test"
+          echo "Deploy OK (simulated)"
+
+  deploy-stage:
+    name: Deploy to Stage (simulated, manual)
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.event_name == 'workflow_dispatch'
+    environment: stage
+    timeout-minutes: 5
+    steps:
+      - name: Simulate deploy to stage
+        run: |
+          echo "Deploying item-service to stage..."
+          echo "Environment: stage"
+          echo "Image: item-service:test"
+          echo "Deploy OK (simulated)"
+
+  deploy-production:
+    name: Deploy to Production (simulated, manual)
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.event_name == 'workflow_dispatch'
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Simulate deploy to production
+        run: |
+          echo "Deploying item-service to production..."
+          echo "Environment: production"
+          echo "Image: item-service:test"
+          echo "Deploy OK (simulated)"
