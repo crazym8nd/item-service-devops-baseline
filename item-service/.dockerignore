@@ -3,7 +3,9 @@
 gradle/wrapper
 gradlew
 gradlew.bat
-build/
+build/*
+!build/libs
+build/libs/*-plain.jar
 .idea
 *.iml
 .vscode

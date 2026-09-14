@@ -1,0 +1,76 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: [ CI ]
+    types: [ completed ]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (release tag v1.2.3 or sha-<commit>)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-development:
+    name: Deploy to Development (simulated)
+    # Runs after a successful CI run on main. Never cancels an in-flight deploy:
+    # per-environment concurrency with cancel-in-progress: false.
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    environment: development
+    timeout-minutes: 5
+    concurrency:
+      group: cd-development
+      cancel-in-progress: false
+    steps:
+      - name: Simulate deploy to development
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}
+        run: |
+          echo "Deploying ${IMAGE} to development..."
+          echo "Environment: development"
+          echo "Deploy OK (simulated)"
+
+  deploy-stage:
+    name: Deploy to Stage (simulated, manual)
+    # Deploys the explicitly selected, already-published image tag — CD never rebuilds.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: stage
+    timeout-minutes: 5
+    concurrency:
+      group: cd-stage
+      cancel-in-progress: false
+    steps:
+      - name: Simulate deploy to stage
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ inputs.image_tag }}
+        run: |
+          echo "Deploying ${IMAGE} to stage..."
+          echo "Environment: stage"
+          echo "Deploy OK (simulated)"
+
+  deploy-production:
+    name: Deploy to Production (simulated, manual)
+    # Deploys the explicitly selected, already-published image tag — CD never rebuilds.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    concurrency:
+      group: cd-production
+      cancel-in-progress: false
+    steps:
+      - name: Simulate deploy to production
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ inputs.image_tag }}
+        run: |
+          echo "Deploying ${IMAGE} to production..."
+          echo "Environment: production"
+          echo "Deploy OK (simulated)"
