@@ -1,7 +1,7 @@
 # Item Service — DevOps Baseline
 
 REST API (Spring Boot 3.5 + PostgreSQL 17) с observability-стеком (Prometheus, Grafana, Loki, Alloy), алертингом в Telegram и CI через GitHub Actions.
-
+test
 ## Требования
 
 - Java 24+
@@ -82,7 +82,7 @@ chat id захардкожен в `contact_points.yml` (плейсхолдер `
 | `Docker Build & Publish` | jar из артефакта → `docker build` → smoke test (PostgreSQL + app) → публикация в GHCR | после всех трёх |
 
 - **Jar собирается один раз** — в джобе `Build`. Docker-образ собирается из готового артефакта, Gradle внутри контейнера не запускается.
-- Линт не блокирует build/tests (быстрый фидбек), но `docker-build` требует зелёные quality-checks — кривой Dockerfile не опубликуется.
+- `Quality Checks` — informational-проверка: она не блокирует build, tests, Docker Build & Publish или merge. Ошибки линтеров остаются видны в workflow для последующего исправления.
 - **Concurrency**: новый пуш отменяет старый запуск CI (`cancel-in-progress: true`).
 - **GHCR**: тот же smoke-протестированный образ публикуется как `ghcr.io/crazym8nd/item-service-devops-baseline:{sha}` и `:latest` — только push в защищённый `main` после одобренного PR. Внешние actions и Docker-образы закреплены полными SHA/digest для воспроизводимых сборок.
 - Артефакты jar и HTML test-report хранятся 7 дней; отсутствие jar завершает CI ошибкой, отсутствие HTML-отчёта выдаёт warning.
