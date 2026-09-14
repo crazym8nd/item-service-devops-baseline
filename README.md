@@ -70,45 +70,71 @@ chat id захардкожен в `contact_points.yml` (плейсхолдер `
 
 ## CI/CD (GitHub Actions)
 
-Два workflow: `ci.yml` (сборка, тесты, публикация образа) и `cd.yml` (деплои, без пересборки).
+В репозитории два workflow: `ci.yml` проверяет и публикует образ, `cd.yml` разворачивает уже опубликованный образ. CD ничего не пересобирает.
 
-### `ci.yml` — CI
+### CI
 
-| Джоба | Что делает | Когда |
+CI запускается при pull request в `main`, push в `main` и вручную из GitHub Actions.
+
+| Job | Назначение |
 |-------|-----------|-------|
-| `Quality Checks` | hadolint, shellcheck, compose config, jq дашбордов | параллельно |
-| `Build` | `./gradlew bootJar -x test`, артефакт jar | параллельно |
-| `Tests` | `./gradlew test`, JUnit-репорт в PR-чек | параллельно |
-| `Docker Build & Publish` | jar из артефакта → `docker build` → smoke test (PostgreSQL + app) → публикация в GHCR | после всех трёх |
+| `Quality Checks` | Проверяет Dockerfile через Hadolint, shell-скрипты через ShellCheck, Compose-конфигурацию и JSON-дашборды Grafana |
+| `Build` | Собирает JAR командой `./gradlew bootJar -x test` и сохраняет его как артефакт |
+| `Tests` | Запускает `./gradlew test`, публикует JUnit-результаты для PR и сохраняет HTML-отчёт |
+| `Docker Build & Publish` | Забирает готовый JAR, собирает Docker-образ, запускает его вместе с PostgreSQL и ждёт ответа `UP` от `/actuator/health` |
 
-- **Jar собирается один раз** — в джобе `Build`. Docker-образ собирается из готового артефакта, Gradle внутри контейнера не запускается.
-- `Quality Checks` — informational-проверка: она не блокирует build, tests, Docker Build & Publish или merge. Ошибки линтеров остаются видны в workflow для последующего исправления.
-- **Concurrency**: новый пуш отменяет старый запуск CI (`cancel-in-progress: true`).
-- **GHCR**: тот же smoke-протестированный образ публикуется как `ghcr.io/crazym8nd/item-service-devops-baseline:{sha}` и `:latest` — только push в защищённый `main` после одобренного PR. Внешние actions и Docker-образы закреплены полными SHA/digest для воспроизводимых сборок.
-- Артефакты jar и HTML test-report хранятся 7 дней; отсутствие jar завершает CI ошибкой, отсутствие HTML-отчёта выдаёт warning.
+`Quality Checks`, `Build` и `Tests` выполняются параллельно. `Quality Checks` — информационная проверка: ошибка видна в Actions, но не останавливает build, tests, публикацию образа или merge.
 
-### `cd.yml` — CD
+Docker-образ собирается только после успешных `Build` и `Tests`. Gradle внутри Docker-образа не запускается: CI использует JAR, собранный отдельной job.
 
-| Джоба | Когда | Что деплоит |
+После push в `main` и успешного smoke test CI публикует проверенный образ в GHCR:
+
+- `ghcr.io/crazym8nd/item-service-devops-baseline:latest`;
+- `ghcr.io/crazym8nd/item-service-devops-baseline:sha-<полный SHA коммита>`.
+
+Для pull request и ручного запуска образ может быть собран и проверен, но в GHCR он не публикуется. Новый push в ту же ветку отменяет незавершённый CI-run. JAR и HTML-отчёт тестов хранятся в Actions 7 дней.
+
+GitHub Actions и Docker-образы закреплены полными SHA/digest, поэтому повторная сборка использует те же внешние зависимости.
+
+### CD
+
+CD использует только образы, опубликованные в GHCR. Перед simulated-deploy он проверяет тег и получает immutable-ссылку на digest:
+
+```text
+ghcr.io/crazym8nd/item-service-devops-baseline@sha256:<digest>
+```
+
+| Окружение | Запуск | Образ |
 |-------|-------|-------------|
-| `Deploy to Development` | авто после успешного CI на `main` (через `workflow_run`) | `ghcr.io/...@sha256:<digest>` от `sha-<commit>` |
-| `Deploy to Stage` | вручную: Actions → **CD** → Run workflow | обязательный `sha-<commit>` или `vX.Y.Z`, затем `@sha256:<digest>` |
-| `Deploy to Production` | вручную: Actions → **CD** → Run workflow | обязательный `sha-<commit>` или `vX.Y.Z`, затем `@sha256:<digest>` |
+| `development` | Автоматически после успешного CI на `main` | `sha-<SHA коммита>`, разрешённый в digest |
+| `stage` | Вручную: **Actions → CD → Run workflow** | `sha-<SHA>` или `vX.Y.Z`, разрешённый в digest |
+| `production` | Вручную: **Actions → CD → Run workflow** | `sha-<SHA>` или `vX.Y.Z`, разрешённый в digest |
 
-- **CD никогда не пересобирает образ** — перед деплоем он проверяет существование тега в GHCR и резолвит его в immutable `@sha256:<digest>`. Поле `image_tag` обязательно; принимаются только `sha-<40 hex>` или `vX.Y.Z`, `latest` и произвольные значения отклоняются.
-- Concurrency per-environment (`cd-development` / `cd-stage` / `cd-production`) с `cancel-in-progress: false` — идущий деплой не отменяется новым пушем.
-- Деплой — имитация (echo) с GitHub Environments `development`/`stage`/`production`.
-  Ручной гейт с approval: Settings → Environments → stage/production → Required reviewers.
+Для ручного запуска `image_tag` обязателен. Workflow принимает только `sha-<40 lowercase hex>` и `vX.Y.Z`; `latest` и произвольные значения отклоняет.
 
-### Деплой по релизным тегам (целевой сценарий)
+У каждого окружения своя concurrency-группа. Уже запущенный деплой не отменяется следующим запуском.
 
-Сейчас CI публикует теги `latest` и `sha-<commit>`. Целевой поток релизов:
+Сейчас deploy-jobs выполняют `echo`. Для `stage` и `production` можно настроить ручное подтверждение: **Settings → Environments → `<environment>` → Required reviewers**.
 
-1. Merge в `main` → CI собирает, тестирует, публикует `sha-<commit>` + `latest`, CD деплоит на development.
-2. Semantic release создаёт Git tag `v1.2.3`; CI запускается по этому тегу и публикует образ с тем же семверным тегом.
-3. Stage/Prod: Actions → **CD** → Run workflow → `image_tag: v1.2.3` → деплой уже опубликованного образа.
+> Один ручной запуск CD создаёт jobs для `stage` и `production`. Для строго последовательного promotion-flow, где production доступен только после stage, нужно отдельно изменить workflow.
 
-Пока публикация семверных тегов не настроена (шаг 2 — roadmap), в `image_tag` для stage/prod можно указывать `sha-<commit>` опубликованного образа.
+### Правила для `main`
+
+Ruleset `merge-request` защищает `main`:
+
+- прямые push, force push и удаление ветки запрещены;
+- изменения попадают в `main` только через pull request;
+- перед merge нужен один approval;
+- ветка должна быть актуальна относительно `main`;
+- перед merge обязательны успешные checks: `Build`, `Tests`, `Docker Build & Publish`.
+
+`Quality Checks` в ruleset не входит и merge не блокирует. После merge CI публикует smoke-tested образ, а CD автоматически разворачивает этот же образ в `development`.
+
+### Релизные теги
+
+Сейчас CI публикует `latest` и `sha-<commit>`. Ручной CD уже принимает `vX.Y.Z`, но CI ещё не запускается по Git-тегам и не публикует образы с семверным тегом.
+
+Целевой release-flow добавлен в roadmap: Semantic release создаёт Git tag `vX.Y.Z`, CI публикует образ с тем же тегом в GHCR, затем CD разворачивает его immutable digest на stage или production. До этого для stage и production используйте опубликованный тег `sha-<SHA коммита>`.
 
 ## Архитектурные решения
 
