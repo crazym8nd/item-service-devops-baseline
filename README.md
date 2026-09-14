@@ -70,29 +70,44 @@ chat id захардкожен в `contact_points.yml` (плейсхолдер `
 
 ## CI/CD (GitHub Actions)
 
-Пайплайн `.github/workflows/ci.yml` — стадии как в GitLab-пайплайне:
+Два workflow: `ci.yml` (сборка, тесты, публикация образа) и `cd.yml` (деплои, без пересборки).
 
-| Стадия | Джоба | Когда |
-|--------|-------|-------|
-| quality | `Quality Checks` — hadolint, shellcheck, compose config, jq дашбордов | push/PR |
-| build | `Build` — `./gradlew bootJar -x test`, артефакт jar | push/PR |
-| tests | `Tests` — `./gradlew test`, артефакт отчётов | после build |
-| build-docker-image | `Docker Build` — `docker build` + smoke test (PostgreSQL + app) | после build + tests |
-| release | `Push image to GHCR` — публикация образа в GitHub Container Registry | только push в main |
-| deploy-development | `Deploy to Development` (имитация) | авто после docker-build |
-| deploy-stage | `Deploy to Stage` (имитация, manual) | только `workflow_dispatch` |
-| deploy-production | `Deploy to Production` (имитация, manual) | только `workflow_dispatch` |
+### `ci.yml` — CI
 
-Дополнительно:
-- **Concurrency**: новый пуш отменяет старый запуск (`cancel-in-progress`).
-- **Timeout**: у каждой джобы лимит времени — защита от зависших сборок.
-- **Smoke test**: CI сам поднимает PostgreSQL + app, ждёт `/actuator/health == UP`, останавливает.
-- **GHCR**: после успешного smoke test в registry публикуется тот же образ как `ghcr.io/crazym8nd/item-service-devops-baseline:{sha}` и `:latest`, без повторной сборки.
-- **Публикация**: выполняется только после слияния одобренного PR в защищённую ветку `main`; PR и ручной запуск workflow образ не публикуют.
+| Джоба | Что делает | Когда |
+|-------|-----------|-------|
+| `Quality Checks` | hadolint, shellcheck, compose config, jq дашбордов | параллельно |
+| `Build` | `./gradlew bootJar -x test`, артефакт jar | параллельно |
+| `Tests` | `./gradlew test`, JUnit-репорт в PR-чек | параллельно |
+| `Docker Build & Publish` | jar из артефакта → `docker build` → smoke test (PostgreSQL + app) → публикация в GHCR | после всех трёх |
 
-Деплой на stage/production — имитация (echo-шаги с GitHub Environments `development`/`stage`/`production`).
-Ручной гейт с approval: Settings → Environments → stage/production → Required reviewers.
-Запуск вручную: Actions → CI → Run workflow.
+- **Jar собирается один раз** — в джобе `Build`. Docker-образ собирается из готового артефакта, Gradle внутри контейнера не запускается.
+- Линт не блокирует build/tests (быстрый фидбек), но `docker-build` требует зелёные quality-checks — кривой Dockerfile не опубликуется.
+- **Concurrency**: новый пуш отменяет старый запуск CI (`cancel-in-progress: true`).
+- **GHCR**: тот же smoke-протестированный образ публикуется как `ghcr.io/crazym8nd/item-service-devops-baseline:{sha}` и `:latest` — только push в защищённый `main` после одобренного PR.
+
+### `cd.yml` — CD
+
+| Джоба | Когда | Что деплоит |
+|-------|-------|-------------|
+| `Deploy to Development` | авто после успешного CI на `main` (через `workflow_run`) | `ghcr.io/...:sha-<commit>` |
+| `Deploy to Stage` | вручную: Actions → **CD** → Run workflow | обязательный тег из поля `image_tag` |
+| `Deploy to Production` | вручную: Actions → **CD** → Run workflow | обязательный тег из поля `image_tag` |
+
+- **CD никогда не пересобирает образ** — деплоится уже опубликованный тег. Поле `image_tag` обязательно: `latest` не используется по умолчанию, чтобы случайно не выкатить более новый образ.
+- Concurrency per-environment (`cd-development` / `cd-stage` / `cd-production`) с `cancel-in-progress: false` — идущий деплой не отменяется новым пушем.
+- Деплой — имитация (echo) с GitHub Environments `development`/`stage`/`production`.
+  Ручной гейт с approval: Settings → Environments → stage/production → Required reviewers.
+
+### Деплой по релизным тегам (целевой сценарий)
+
+Сейчас CI публикует теги `latest` и `sha-<commit>`. Целевой поток релизов:
+
+1. Merge в `main` → CI собирает, тестирует, публикует `sha-<commit>` + `latest`, CD деплоит на development.
+2. Релизный тег `v1.2.3` → CI публикует образ с семверным тегом (см. Semantic release в roadmap).
+3. Stage/Prod: Actions → **CD** → Run workflow → `image_tag: v1.2.3` → деплой уже опубликованного образа.
+
+Пока публикация семверных тегов не настроена (шаг 2 — roadmap), в `image_tag` для stage/prod можно указывать `sha-<commit>` опубликованного образа.
 
 ## Архитектурные решения
 
